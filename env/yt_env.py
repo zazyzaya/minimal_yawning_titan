@@ -1,15 +1,18 @@
-from random import choice, random, randint
+import random 
 
 import networkx as nx
 import torch 
 from torch_geometric.nn import MessagePassing 
 from torch_geometric.utils import to_undirected
 
-def build_graph(n, p=0.1, min_v=0.01, max_v=1):
-    g = nx.erdos_renyi_graph(n, p)
+def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=0):
+    random.seed(seed)
+    torch.random.manual_seed(seed)
+
+    g = nx.erdos_renyi_graph(num_nodes, p, seed=seed+recurse)
     ei = [list(e) for e in g.edges]
 
-    nodes = set(range(n))
+    nodes = set(range(num_nodes))
     isolated_nodes = nodes - set(sum(ei, []))
     nonisolated = list(nodes - isolated_nodes)
 
@@ -17,20 +20,21 @@ def build_graph(n, p=0.1, min_v=0.01, max_v=1):
     # are isolated. (Note: this could still cause graph 
     # to be disconnected)
     for n in isolated_nodes: 
-        ei.append([n,choice(nonisolated)])
+        ei.append([n,random.choice(nonisolated)])
 
     # Not sure of a better way to address this. Could also just 
     # add random edges, but let's see how frequent this actually is 
     g = nx.Graph(ei)
     if not nx.is_connected(g):
-        return build_graph(n,p,min_v, max_v)
+        print(f"Graph was disconnected. Trying again ({recurse+1})")
+        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1)
 
     # Now that we know graph is connected, it's very simple to spin up 
     # the node features. Just a (n x 2) matrix of each node's 
     # vulnerability score, and a 0 to show it's not comprimised
     span = max_v - min_v 
-    x = torch.zeros((n,2))
-    x[:, 0] = (torch.rand(n) * span) + min_v 
+    x = torch.zeros((num_nodes,2))
+    x[:, 0] = (torch.rand(num_nodes) * span) + min_v 
 
     # Lastly, convert edges to torch-friendly representation 
     ei = torch.tensor(ei, dtype=torch.long).T 
@@ -46,6 +50,9 @@ class YTEnv:
     # Default, finally found in https://github.com/dstl/YAWNING-TITAN/src/yawning_titan/game_modes/_package_data/game_modes.json
     # I think they used scenario 3 of the ones they have. 
     RED_SKILL = 0.5 
+    ZERO_DAY_RATE = 3
+
+    EP_LEN = 500 
 
     def __init__(self, x,ei, patch_strength=0.2):
         self.orig_x = x
@@ -55,14 +62,44 @@ class YTEnv:
         # Remains static (for now...)
         self.ei = ei 
 
+        # NOOP + patch * N + restore * N 
+        self.blue_action_space = 1 + (x.size(0) * 2 )
+        self.red = RedAgent(self, self.ZERO_DAY_RATE)
+
+        self.ts = 0 
+
     def reset(self):
         self.x = self.orig_x.clone() 
+        self.ts = 0 
+
+        # Pick a random entry point for the red agent
+        self.x[random.randint(0,self.num_nodes-1), self.COMP] = 1
         return self.state() 
     
     def state(self):
         return self.x, self.ei
 
-    def step(self, action, target):
+    def step(self, blue_action, blue_target):
+        # Let red go first
+        action,target = self.red.select_action(self.x, self.ei)
+        self.act(action, target)
+
+        # Then blue performs action 
+        r = self.act(blue_action, blue_target)
+        
+        terminate = False 
+        # Every computer is comprimised
+        if r == 0: 
+            r = -100 
+            terminate = True 
+        elif self.ts == self.EP_LEN:
+            r = 100 
+            terminate = True 
+
+        self.ts += 1 
+        return r, terminate, self.state()
+
+    def act(self, action, target):
         action(target)
         return (self.num_nodes - self.x[:, self.COMP].sum()) / self.num_nodes
 
@@ -81,7 +118,7 @@ class YTEnv:
         attack_strength = self.RED_SKILL * self.x[nid, self.VULN]
 
         # Success
-        if random() < attack_strength:
+        if random.random() < attack_strength:
             self.x[nid, self.COMP] = 1. 
 
     def zero_day(self, nid):
@@ -102,7 +139,7 @@ class RedAgent:
 
         # Select target node within reach 
         infectable = (x[:, 1] == 0).logical_and(reachable).nonzero().squeeze(-1)
-        target = infectable[randint(0, infectable.size(0)-1)]
+        target = infectable[random.randint(0, infectable.size(0)-1)]
 
         if self.zd == self.zd_rate: 
             self.zd = 0 
@@ -133,4 +170,4 @@ class BlueAgent:
         a = distro.sample()
         p = distro.log_prob(a) 
 
-        return self.num_to_action(a), a,value,p
+        return self.num_to_action(a.item()), a.item(),value.item(),p.item()
