@@ -8,7 +8,7 @@ from torch_geometric.nn import GCNConv
 
 class ActorNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, action_space, 
-                 hidden1=256, hidden2=64, lr=0.0003):
+                 hidden1=32, hidden2=64, lr=0.005):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
@@ -30,11 +30,11 @@ class ActorNetwork(nn.Module):
         dist = self.out(x.reshape(nbatches, self.num_nodes*x.size(1)))
 
         return Categorical(dist)
-    
+
 
 class CriticNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, 
-                 hidden1=256, hidden2=64, lr=0.001):
+                 hidden1=32, hidden2=64, lr=0.01):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
@@ -54,13 +54,13 @@ class CriticNetwork(nn.Module):
 
 class GraphPPO():
     def __init__(self, num_nodes, in_dim, action_space, batch_size, buffer_size,
-                 gamma=0.99, lmbda=0.95, clip=0.1):
+                 gamma=0.99, lmbda=0.95, clip=0.1, alr=0.005, clr=0.01):
         super().__init__()
         self.args = (num_nodes, in_dim, action_space, batch_size, buffer_size)
-        self.kwargs = dict(gamma=gamma, lmbda=lmbda, clip=clip)
+        self.kwargs = dict(gamma=gamma, lmbda=lmbda, clip=clip, alr=alr, clr=clr)
 
-        self.actor = ActorNetwork(in_dim, num_nodes, action_space)
-        self.critic = CriticNetwork(in_dim, num_nodes)
+        self.actor = ActorNetwork(in_dim, num_nodes, action_space, lr=alr)
+        self.critic = CriticNetwork(in_dim, num_nodes, lr=clr)
         self.memory = PPOMemory(batch_size, buffer_size)
 
         self.mse = nn.MSELoss()
@@ -189,6 +189,8 @@ def load_ppo(fname):
     agent.actor.load_state_dict(db['actor'])
     agent.critic.load_state_dict(db['critic'])
 
+    return agent 
+
 class PPOMemory:
     def __init__(self, bs, buffer_size):
         self.s = deque([], buffer_size)
@@ -204,12 +206,12 @@ class PPOMemory:
         '''
         Args are state, action, value, log_prob, reward
         '''
-        self.s.appendleft(s)
-        self.a.appendleft(a)
-        self.v.appendleft(v)
-        self.p.appendleft(p)
-        self.r.appendleft(r) 
-        self.t.appendleft(t)
+        self.s.append(s)
+        self.a.append(a)
+        self.v.append(v)
+        self.p.append(p)
+        self.r.append(r) 
+        self.t.append(t)
 
     def get_batches(self):
         idxs = torch.randperm(len(self.a))

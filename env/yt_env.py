@@ -3,13 +3,19 @@ import random
 import networkx as nx
 import torch 
 from torch_geometric.nn import MessagePassing 
-from torch_geometric.utils import to_undirected
+from torch_geometric.utils import to_undirected, degree 
 
-def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=0):
-    random.seed(seed)
-    torch.random.manual_seed(seed)
+PRIMES = [2,3,5,7,11,13,17,19,23,29]
 
-    g = nx.erdos_renyi_graph(num_nodes, p, seed=seed+recurse)
+def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
+    if seed is not None:
+        seed_val = PRIMES[seed] ** recurse
+        random.seed(seed_val)
+        torch.random.manual_seed(seed_val)
+        g = nx.erdos_renyi_graph(num_nodes, p, seed=seed_val)
+    else:
+        g = nx.erdos_renyi_graph(num_nodes, p)
+
     ei = [list(e) for e in g.edges]
 
     nodes = set(range(num_nodes))
@@ -26,8 +32,8 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=0):
     # add random edges, but let's see how frequent this actually is 
     g = nx.Graph(ei)
     if not nx.is_connected(g):
-        print(f"Graph was disconnected. Trying again ({recurse+1})")
-        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1)
+        print(f"Graph was disconnected. Trying again ({recurse})")
+        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, seed=seed)
 
     # Now that we know graph is connected, it's very simple to spin up 
     # the node features. Just a (n x 2) matrix of each node's 
@@ -40,18 +46,23 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=0):
     ei = torch.tensor(ei, dtype=torch.long).T 
     ei = to_undirected(ei)
 
+    deg = degree(ei[0])
+    x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
+
     return x, ei 
     
 
 class YTEnv: 
     VULN = 0 
     COMP = 1 
+    DEGREE = 2
     
     # Default, finally found in https://github.com/dstl/YAWNING-TITAN/src/yawning_titan/game_modes/_package_data/game_modes.json
     # I think they used scenario 3 of the ones they have. 
-    RED_SKILL = 0.5 
+    RED_SKILL = 0.5
     ZERO_DAY_RATE = 3
 
+    REPAIR_PROB = 1
     EP_LEN = 500 
 
     def __init__(self, x,ei, patch_strength=0.2):
@@ -92,7 +103,7 @@ class YTEnv:
         if r == 0: 
             r = -100 
             terminate = True 
-        elif self.ts == self.EP_LEN:
+        elif self.ts == self.EP_LEN-1:
             r = 100 
             terminate = True 
 
@@ -108,18 +119,20 @@ class YTEnv:
         vscore = max(0.2, vscore-0.2)
         self.x[nid, self.VULN] = vscore 
 
-    def restore(self, nid):
-        self.x[nid] = self.orig_x[nid]
+    def restore(self, nid):    
+        if random.random() < self.REPAIR_PROB:
+            self.x[nid] = self.orig_x[nid]
 
     def noop(self, *args):
         pass 
 
-    def attack(self, nid):
-        attack_strength = self.RED_SKILL * self.x[nid, self.VULN]
+    def attack(self, nids):
+        for nid in nids:
+            attack_strength = self.RED_SKILL * self.x[nid, self.VULN]
 
-        # Success
-        if random.random() < attack_strength:
-            self.x[nid, self.COMP] = 1. 
+            # Success
+            if random.random() < attack_strength:
+                self.x[nid, self.COMP] = 1. 
 
     def zero_day(self, nid):
         self.x[nid, self.COMP] = 1. 
@@ -134,13 +147,18 @@ class RedAgent:
     def select_action(self, x,ei):
         # All nodes one-hop from a comprimised node
         reachable = self.mp.propagate(
-            ei, x=x[:, 1:]
+            ei, x=x[:, 1:2]
         ).squeeze(-1).bool()
 
         # Select target node within reach 
         infectable = (x[:, 1] == 0).logical_and(reachable).nonzero().squeeze(-1)
-        target = infectable[random.randint(0, infectable.size(0)-1)]
+        
+        # No infected nodes remaining
+        if infectable.size(0) == 0:
+            # Emailed author about what to do here. For now, red just NOOPs
+            return self.env.noop, None 
 
+        target = [infectable[random.randint(0, infectable.size(0)-1)]]
         if self.zd == self.zd_rate: 
             self.zd = 0 
             fn = self.env.zero_day 
@@ -165,9 +183,9 @@ class BlueAgent:
         distro,value = self.model(x,ei)
 
         if self.deterministic:
-            return self.num_to_action(distro.argmax())
-        
-        a = distro.sample()
-        p = distro.log_prob(a) 
+            a = distro.probs.argmax()
+        else:
+            a = distro.sample()
 
+        p = distro.log_prob(a) 
         return self.num_to_action(a.item()), a.item(),value.item(),p.item()
