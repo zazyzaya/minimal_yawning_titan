@@ -14,7 +14,9 @@ class ActorNetwork(nn.Module):
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
         self.out = nn.Sequential(
-            nn.Linear(hidden2*num_nodes, action_space),
+            nn.Linear((in_dim+hidden2)*num_nodes, hidden2),
+            nn.ReLU(), 
+            nn.Linear(hidden2, action_space),
             nn.Softmax(dim=-1)
         )
 
@@ -23,9 +25,10 @@ class ActorNetwork(nn.Module):
         self.num_nodes = num_nodes
 
     def forward(self, x, ei):
-        x = torch.relu(self.conv1(x, ei))
-        x = torch.relu(self.conv2(x, ei))
-    
+        z = torch.relu(self.conv1(x, ei))
+        z = torch.relu(self.conv2(z, ei))
+        x = torch.cat([x,z], dim=1)
+        
         nbatches = x.size(0) // self.num_nodes
         dist = self.out(x.reshape(nbatches, self.num_nodes*x.size(1)))
 
@@ -39,29 +42,34 @@ class CriticNetwork(nn.Module):
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
-        self.out = nn.Linear(hidden2*num_nodes, 1)
+        self.out = nn.Sequential(
+            nn.Linear((in_dim+hidden2)*num_nodes, hidden2),
+            nn.ReLU(),
+            nn.Linear(hidden2, 1)
+        )
 
         self.opt = Adam(self.parameters(), lr)
         self.num_nodes = num_nodes
 
     def forward(self, x, ei):
-        x = torch.relu(self.conv1(x, ei))
-        x = torch.relu(self.conv2(x, ei))
+        z = torch.relu(self.conv1(x, ei))
+        z = torch.relu(self.conv2(z, ei))
+        x = torch.cat([z,x], dim=1)
 
         nbatches = x.size(0) // self.num_nodes
         return self.out(x.reshape(nbatches, self.num_nodes*x.size(1)))
 
 
 class GraphPPO():
-    def __init__(self, num_nodes, in_dim, action_space, batch_size, buffer_size,
+    def __init__(self, num_nodes, in_dim, action_space, batch_size, 
                  gamma=0.99, lmbda=0.95, clip=0.1, alr=0.005, clr=0.01):
         super().__init__()
-        self.args = (num_nodes, in_dim, action_space, batch_size, buffer_size)
+        self.args = (num_nodes, in_dim, action_space, batch_size)
         self.kwargs = dict(gamma=gamma, lmbda=lmbda, clip=clip, alr=alr, clr=clr)
 
         self.actor = ActorNetwork(in_dim, num_nodes, action_space, lr=alr)
         self.critic = CriticNetwork(in_dim, num_nodes, lr=clr)
-        self.memory = PPOMemory(batch_size, buffer_size)
+        self.memory = PPOMemory(batch_size)
 
         self.mse = nn.MSELoss()
         self.gamma = gamma 
@@ -100,6 +108,7 @@ class GraphPPO():
         Assume that an external process is adding memories to 
         the PPOMemory unit, and this is called every so often
         '''
+        self.train()
         for e in range(epochs):
             s,a,v,p,r,t, batches = self.memory.get_batches()
 
@@ -171,6 +180,7 @@ class GraphPPO():
                 if verbose:
                     print(f'[{e}] C-Loss: {0.5*critic_loss.item():0.4f}  A-Loss: {actor_loss.item():0.4f} E-loss: {-entropy_loss.item()*0.01:0.4f}')
 
+        self.memory.clear()
         return total_loss.item()
     
     def save(self, outf='saved_models/ppo.pt'):
@@ -192,13 +202,13 @@ def load_ppo(fname):
     return agent 
 
 class PPOMemory:
-    def __init__(self, bs, buffer_size):
-        self.s = deque([], buffer_size)
-        self.a = deque([], buffer_size)
-        self.v = deque([], buffer_size)
-        self.p = deque([], buffer_size)
-        self.r = deque([], buffer_size)
-        self.t = deque([], buffer_size)
+    def __init__(self, bs):
+        self.s = []
+        self.a = []
+        self.v = []
+        self.p = []
+        self.r = []
+        self.t = []
 
         self.bs = bs 
 
@@ -219,6 +229,14 @@ class PPOMemory:
 
         return self.s, self.a, self.v, \
             self.p, self.r, self.t, batch_idxs
+    
+    def clear(self):
+        self.s = []
+        self.a = []
+        self.v = []
+        self.p = []
+        self.r = []
+        self.t = []
 
 
 def combine_subgraphs(states):

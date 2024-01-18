@@ -3,9 +3,9 @@ import random
 import networkx as nx
 import torch 
 from torch_geometric.nn import MessagePassing 
-from torch_geometric.utils import to_undirected, degree 
+from torch_geometric.utils import to_undirected, degree, add_remaining_self_loops
 
-PRIMES = [2,3,5,7,11,13,17,19,23,29]
+PRIMES = [3,5,7,11,13,17,19,23,29,31]
 
 def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
     if seed is not None:
@@ -49,6 +49,7 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
     deg = degree(ei[0])
     x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
 
+    ei = add_remaining_self_loops(ei)[0]
     return x, ei 
     
 
@@ -61,6 +62,8 @@ class YTEnv:
     # I think they used scenario 3 of the ones they have. 
     RED_SKILL = 0.5
     ZERO_DAY_RATE = 3
+
+    NODE_VULN_LOWER_BOUND = 0.01
 
     REPAIR_PROB = 1
     EP_LEN = 500 
@@ -112,19 +115,31 @@ class YTEnv:
 
     def act(self, action, target):
         action(target)
-        return (self.num_nodes - self.x[:, self.COMP].sum()) / self.num_nodes
+        return (
+            self.num_nodes - self.x[:, self.COMP].sum()
+        ) / self.num_nodes
 
     def patch(self, nid):
         vscore = self.x[nid, self.VULN]
-        vscore = max(0.2, vscore-0.2)
-        self.x[nid, self.VULN] = vscore 
+        if vscore <= self.NODE_VULN_LOWER_BOUND:
+            return 0
+    
+        self.x[nid, self.VULN] = max(self.NODE_VULN_LOWER_BOUND, vscore-0.2)
+        return 0
 
-    def restore(self, nid):    
+    def restore(self, nid):
+        # Penalize restoring hosts that are safe
+        if self.x[nid, self.COMP] == 0:
+            ret = -1
+        else:
+            ret = 0 
+
         if random.random() < self.REPAIR_PROB:
             self.x[nid] = self.orig_x[nid]
 
-    def noop(self, *args):
-        pass 
+        return ret 
+
+    def noop(self, *args): return 0
 
     def attack(self, nids):
         for nid in nids:
@@ -133,9 +148,11 @@ class YTEnv:
             # Success
             if random.random() < attack_strength:
                 self.x[nid, self.COMP] = 1. 
+        return 0
 
     def zero_day(self, nid):
         self.x[nid, self.COMP] = 1. 
+        return 0
 
 
 class RedAgent:

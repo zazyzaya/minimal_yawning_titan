@@ -9,7 +9,7 @@ EPOCHS = 5
 MAX_STEPS = 5e6
 
 BATCH_SIZE=64
-BUFFER_SIZE=500 # Hold last 1 episodes at best
+N = 5
 
 SEED = 0
 
@@ -17,6 +17,7 @@ torch.set_num_threads(16)
 
 @torch.no_grad()
 def simulate(env: YTEnv, agent: BlueAgent):
+    agent.model.eval()
     s = env.reset()
     tot_r = 0
     t = False 
@@ -33,31 +34,29 @@ def simulate(env: YTEnv, agent: BlueAgent):
 def experiment(env: YTEnv, agent: BlueAgent):
     tr_steps = last_print = 0 
     ep_lens, ep_rews = [],[]
+    best_r = 0 
 
     while tr_steps < MAX_STEPS:
-        agent.model.eval()
-        steps, rew = simulate(env, agent)
-        
-        ep_lens.append(steps)
-        ep_rews.append(rew)
-        tr_steps += steps
+        for _ in range(N):        
+            steps, rew = simulate(env, agent)
+            
+            ep_lens.append(steps)
+            ep_rews.append(rew)
+            tr_steps += steps
 
-        if tr_steps - last_print > 500: 
-            agent.model.train()
-            agent.model.learn(5, verbose=False)
+        r = ep_rews[-100:]
+        l = ep_lens[-100:]
 
-            r = ep_rews[-100:]
-            l = ep_lens[-100:]
-
-            print(f'[{tr_steps}] Avg r: {sum(r)/100:0.2f}, Avg l: {sum(l)/100:0.2f}')
-            torch.save({'rews': ep_rews, 'lens': ep_lens}, f'logs/{GRAPH_SIZE}N_{SEED}.pt')
+        avg_r = sum(r)/len(r)
+        if avg_r >= best_r:
             agent.model.save(f'saved_models/ppo_{GRAPH_SIZE}N_{SEED}.pt')
+            best_r = avg_r 
 
-            last_print = tr_steps 
 
-    print(f'[{tr_steps}] Avg r: {sum(r)/100:0.2f}, Avg l: {sum(l)/100:0.2f}')
-    torch.save({'rews': ep_rews, 'lens': ep_lens}, f'logs/{GRAPH_SIZE}N_{SEED}.pt')
-    agent.model.save(f'saved_models/ppo_{GRAPH_SIZE}N_{SEED}.pt')
+        agent.model.learn(1, verbose=False)
+
+        print(f'[{tr_steps}] Avg r: {avg_r:0.2f}, Avg l: {sum(l)/len(l):0.2f}')
+        torch.save({'rews': ep_rews, 'lens': ep_lens}, f'logs/{GRAPH_SIZE}N_{SEED}.pt')
 
 
 if __name__ == '__main__':
@@ -70,7 +69,7 @@ if __name__ == '__main__':
     x,ei = build_graph(GRAPH_SIZE, seed=SEED)
     env = YTEnv(x,ei)
     
-    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, BUFFER_SIZE)
+    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=0.0003, clr=0.001)
     agent = BlueAgent(env, blue)
 
     experiment(env, agent)
