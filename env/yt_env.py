@@ -54,6 +54,7 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
 
     deg = degree(ei[0])
     x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
+    x = torch.cat([x, torch.eye(x.size(0))], dim=1)
 
     ei = add_remaining_self_loops(ei)[0]
     return x, ei 
