@@ -17,10 +17,16 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
         g = nx.erdos_renyi_graph(num_nodes, p)
 
     ei = [list(e) for e in g.edges]
-
+    
     nodes = set(range(num_nodes))
     isolated_nodes = nodes - set(sum(ei, []))
     nonisolated = list(nodes - isolated_nodes)
+
+    # Unlikely but has happened in some experiments
+    if len(nonisolated) == 0: 
+        print(f"nonisolated == {{}} . Trying again ({recurse})")
+        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, seed=seed)
+    
 
     # Authors use "amended Erdos-Renyi" s.t. no nodes
     # are isolated. (Note: this could still cause graph 

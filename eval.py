@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+
 import torch 
 from tqdm import tqdm 
 
@@ -7,11 +9,22 @@ from model.ppo import load_ppo
 from train import simulate
 
 # TODO make these args
-N = 40
-SEED = 0
+ap = ArgumentParser()
+ap.add_argument('n', nargs=1, type=int)
+ap.add_argument('-s', '--seed', default=0, type=int)
+ap.add_argument('-r', '--random', action='store_false')
+ap.add_argument('--best', action='store_true')
+args = ap.parse_args()
 
-#model = load_ppo(f'saved_models/ppo_{N}N-{SEED}.pt')
-#model.eval()
+N = args.n[0]
+SEED = args.seed 
+DETERMINISTIC = args.random 
+USE_BEST = '' if args.best else '_last'
+
+FNAME = f'ppo_{N}N_{SEED}{USE_BEST}'
+
+model = load_ppo(f'saved_models/{FNAME}.pt')
+model.eval()
 torch.no_grad()
 
 # 50 envs, for 10 trials each
@@ -22,7 +35,7 @@ for _ in range(50):
     g = build_graph(N)
     env = YTEnv(*g)
 
-    blue = RestoreMostDangerous(env)
+    blue = BlueAgent(env, model, deterministic=True)
     for _ in range(10):
         l,r = simulate(env, blue)
         prog.update()
@@ -36,7 +49,7 @@ lens = torch.tensor(lens, dtype=torch.float)
 
 torch.save(
     {'rews': rews, 'lens': lens}, 
-    f'results/heuristic_eval.pt'  
+    f'results/{FNAME}_eval.pt'  
 )
 
 print(f"R Mean: {rews.mean().item()}, L Mean: {lens.mean().item()}")

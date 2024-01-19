@@ -58,6 +58,7 @@ def experiment(env: YTEnv, agent: BlueAgent):
         print(f'[{tr_steps}] Avg r: {avg_r:0.2f}, Avg l: {sum(l)/len(l):0.2f}')
         torch.save({'rews': ep_rews, 'lens': ep_lens}, f'logs/{GRAPH_SIZE}N_{SEED}.pt')
 
+    agent.model.save(f'saved_models/ppo_{GRAPH_SIZE}N_{SEED}_last.pt')
 
 if __name__ == '__main__':
     ap = ArgumentParser()
@@ -69,7 +70,7 @@ if __name__ == '__main__':
     x,ei = build_graph(GRAPH_SIZE, seed=SEED)
     env = YTEnv(x,ei)
     
-    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=0.0003, clr=0.001)
+    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=0.003, clr=0.01)
     agent = BlueAgent(env, blue)
 
     experiment(env, agent)
