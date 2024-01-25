@@ -70,7 +70,7 @@ if __name__ == '__main__':
     x,ei = build_graph(GRAPH_SIZE, seed=SEED)
     env = YTEnv(x,ei)
     
-    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=0.003, clr=0.01)
+    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=0.0005, clr=0.001)
     agent = BlueAgent(env, blue)
 
     experiment(env, agent)
