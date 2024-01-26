@@ -8,15 +8,13 @@ from torch_geometric.nn import GCNConv
 
 class ActorNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, action_space, 
-                 hidden1=32, hidden2=64, lr=0.005):
+                 hidden1=64, hidden2=64, lr=0.005):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
         self.out = nn.Sequential(
-            nn.Linear((in_dim+hidden2)*num_nodes, hidden2),
-            nn.ReLU(), 
-            nn.Linear(hidden2, action_space),
+            nn.Linear(hidden2*num_nodes, action_space),
             nn.Softmax(dim=-1)
         )
 
@@ -27,26 +25,22 @@ class ActorNetwork(nn.Module):
     def forward(self, x, ei):
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
-        x = torch.cat([x,z], dim=1)
+        #x = torch.cat([x,z], dim=1)
         
-        nbatches = x.size(0) // self.num_nodes
-        dist = self.out(x.reshape(nbatches, self.num_nodes*x.size(1)))
+        nbatches = z.size(0) // self.num_nodes
+        dist = self.out(z.reshape(nbatches, self.num_nodes*z.size(1)))
 
         return Categorical(dist)
 
 
 class CriticNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, 
-                 hidden1=32, hidden2=64, lr=0.01):
+                 hidden1=64, hidden2=64, lr=0.01):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
-        self.out = nn.Sequential(
-            nn.Linear((in_dim+hidden2)*num_nodes, hidden2),
-            nn.ReLU(),
-            nn.Linear(hidden2, 1)
-        )
+        self.out = nn.Linear(hidden2*num_nodes, 1)
 
         self.opt = Adam(self.parameters(), lr)
         self.num_nodes = num_nodes
@@ -54,15 +48,15 @@ class CriticNetwork(nn.Module):
     def forward(self, x, ei):
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
-        x = torch.cat([z,x], dim=1)
+        #x = torch.cat([z,x], dim=1)
 
-        nbatches = x.size(0) // self.num_nodes
-        return self.out(x.reshape(nbatches, self.num_nodes*x.size(1)))
+        nbatches = z.size(0) // self.num_nodes
+        return self.out(z.reshape(nbatches, self.num_nodes*z.size(1)))
 
 
 class GraphPPO():
     def __init__(self, num_nodes, in_dim, action_space, batch_size, 
-                 gamma=0.99, lmbda=0.95, clip=0.1, alr=0.005, clr=0.01):
+                 gamma=0.99, lmbda=0.95, clip=0.2, alr=0.005, clr=0.01):
         super().__init__()
         self.args = (num_nodes, in_dim, action_space, batch_size)
         self.kwargs = dict(gamma=gamma, lmbda=lmbda, clip=clip, alr=alr, clr=clr)

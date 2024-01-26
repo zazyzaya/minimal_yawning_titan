@@ -13,15 +13,14 @@ ap = ArgumentParser()
 ap.add_argument('n', nargs=1, type=int)
 ap.add_argument('-s', '--seed', default=0, type=int)
 ap.add_argument('-r', '--random', action='store_false')
-ap.add_argument('--best', action='store_true')
+
 args = ap.parse_args()
 
 N = args.n[0]
 SEED = args.seed 
 DETERMINISTIC = args.random 
-USE_BEST = '' if args.best else '_last'
 
-FNAME = f'ppo_{N}N_{SEED}{USE_BEST}'
+FNAME = f'ppo_{N}N_{SEED}_last'
 
 model = load_ppo(f'saved_models/{FNAME}.pt')
 model.eval()

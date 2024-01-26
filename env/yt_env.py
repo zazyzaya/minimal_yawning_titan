@@ -5,11 +5,10 @@ import torch
 from torch_geometric.nn import MessagePassing 
 from torch_geometric.utils import to_undirected, degree, add_remaining_self_loops
 
-PRIMES = [3,5,7,11,13,17,19,23,29,31]
 
-def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=1, seed=None):
+def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=None):
     if seed is not None:
-        seed_val = PRIMES[seed] ** recurse
+        seed_val = seed + recurse
         random.seed(seed_val)
         torch.random.manual_seed(seed_val)
         g = nx.erdos_renyi_graph(num_nodes, p, seed=seed_val)
