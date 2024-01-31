@@ -7,11 +7,17 @@ from model.ppo import GraphPPO
 
 MAX_STEPS = 5e6
 
-# Using stable baselines hyperparams
-EPOCHS = 10
+# Stable baselines hyperparams
+EPOCHS = 1
 BATCH_SIZE=64
-N = 2048
-LR = 0.0003
+#N = 2048
+#LR = 0.0003
+#CLIP = 0.2
+
+N = 5
+C_LR = 0.001
+A_LR = 0.0003
+CLIP = 0.1
 
 SEED = 0
 
@@ -67,11 +73,12 @@ def experiment(env: YTEnv, agent: BlueAgent):
     ep_lens, ep_rews = [],[]
 
     while tr_steps < MAX_STEPS:   
-        steps, rew = simulate_n(env, agent)
-        
-        ep_lens += steps 
-        ep_rews += rew 
-        tr_steps += N
+        for _ in range(N):
+            steps, rew = simulate(env, agent)
+            
+            ep_lens.append(steps)
+            ep_rews.append(rew) 
+            tr_steps += steps
 
         r = ep_rews[-100:]
         l = ep_lens[-100:]
@@ -94,7 +101,7 @@ if __name__ == '__main__':
     x,ei = build_graph(GRAPH_SIZE, seed=SEED)
     env = YTEnv(x,ei)
     
-    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=LR, clr=LR)
+    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=A_LR, clr=C_LR, clip=CLIP)
     agent = BlueAgent(env, blue)
 
     experiment(env, agent)

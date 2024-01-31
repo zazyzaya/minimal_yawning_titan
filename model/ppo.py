@@ -8,13 +8,15 @@ from torch_geometric.nn import GCNConv
 
 class ActorNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, action_space, 
-                 hidden1=64, hidden2=64, lr=0.005):
+                 hidden1=32, hidden2=64, lr=0.005):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
         self.out = nn.Sequential(
-            nn.Linear(hidden2*num_nodes, action_space),
+            nn.Linear(hidden2*num_nodes, hidden2),
+            nn.ReLU(), 
+            nn.Linear(hidden2, action_space),
             nn.Softmax(dim=-1)
         )
 
@@ -35,12 +37,16 @@ class ActorNetwork(nn.Module):
 
 class CriticNetwork(nn.Module):
     def __init__(self, in_dim, num_nodes, 
-                 hidden1=64, hidden2=64, lr=0.01):
+                 hidden1=32, hidden2=64, lr=0.01):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
-        self.out = nn.Linear(hidden2*num_nodes, 1)
+        self.out = nn.Sequential(
+            nn.Linear(hidden2*num_nodes, hidden2),
+            nn.ReLU(),
+            nn.Linear(hidden2, 1)
+        )
 
         self.opt = Adam(self.parameters(), lr)
         self.num_nodes = num_nodes
@@ -133,15 +139,18 @@ class GraphPPO():
             advantages = r - torch.tensor(v)
 
             for b_idx,b in enumerate(batches):
+                self.__zero_grad()
+                
                 b = b.tolist()
                 new_probs = []
 
                 s_ = [s[idx] for idx in b]
                 a_ = [a[idx] for idx in b]
                 batched_states = combine_subgraphs(s_)
-                dist = self.actor(*batched_states)
                 
+                dist = self.actor(*batched_states)
                 critic_vals = self.critic(*batched_states)
+                
                 new_probs = dist.log_prob(torch.tensor(a_))
                 old_probs = torch.tensor([p[i] for i in b])
                 entropy = dist.entropy()
@@ -166,8 +175,7 @@ class GraphPPO():
                 entropy_loss = entropy.mean()
 
                 # Calculate gradient and backprop
-                total_loss = actor_loss + 0.5*critic_loss - 0.01*entropy_loss
-                self.__zero_grad()
+                total_loss = actor_loss + 0.5*critic_loss #- 0.01*entropy_loss
                 total_loss.backward() 
                 self.__step()
 
