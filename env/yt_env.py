@@ -192,10 +192,11 @@ class RedAgent:
         return fn, target 
     
 class BlueAgent:
-    def __init__(self, env, model, deterministic=False):
+    def __init__(self, env, model, deterministic=False, inductive=False):
         self.env = env 
         self.model = model 
         self.deterministic = deterministic
+        self.inductive = inductive
 
     def num_to_action(self, i):
         action = [self.env.patch, self.env.restore, self.env.noop][i // self.env.num_nodes]
@@ -203,7 +204,11 @@ class BlueAgent:
         return action, target 
 
     def select_action(self, x,ei):
-        distro,value = self.model(x,ei)
+        if not self.inductive:
+            distro,value = self.model(x,ei)
+        else: 
+            # Need to provide num_nodes to inductive models
+            distro,value = self.model(x,ei, x.size(0))
 
         if self.deterministic:
             a = distro.probs.argmax()

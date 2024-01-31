@@ -1,73 +1,75 @@
-from collections import deque
-
 import torch 
 from torch import nn 
 from torch.distributions.categorical import Categorical
 from torch.optim import Adam
 from torch_geometric.nn import GCNConv
 
+from model.ppo import GraphPPO, PPOMemory, combine_subgraphs
+
 class ActorNetwork(nn.Module):
-    def __init__(self, in_dim, num_nodes, action_space, 
+    def __init__(self, in_dim, action_space, 
                  hidden1=32, hidden2=64, lr=0.005):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
         self.out = nn.Sequential(
-            nn.Linear(hidden2*num_nodes, hidden2),
+            nn.Linear(hidden2, hidden2),
             nn.ReLU(), 
             nn.Linear(hidden2, action_space),
-            nn.Softmax(dim=-1)
         )
+        self.softmax = nn.Softmax(dim=-1)
 
         self.drop = nn.Dropout()
         self.opt = Adam(self.parameters(), lr)
-        self.num_nodes = num_nodes
 
-    def forward(self, x, ei):
+    def forward(self, x, ei, num_nodes):
+        '''
+        Can still batch input, but assumes every batch-member
+        has the same number of nodes (othewise, run one at a time)
+        '''
+
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
         #x = torch.cat([x,z], dim=1)
         
-        nbatches = z.size(0) // self.num_nodes
-        dist = self.out(z.reshape(nbatches, self.num_nodes*z.size(1)))
+        nbatches = z.size(0) // num_nodes
+        dist = self.out(z).reshape(nbatches, num_nodes*z.size(1))
+        dist = self.softmax(dist)
 
         return Categorical(dist)
-
+    
 class CriticNetwork(nn.Module):
-    def __init__(self, in_dim, num_nodes, 
-                 hidden1=32, hidden2=64, lr=0.01):
+    def __init__(self, in_dim, hidden1=32, hidden2=64, lr=0.01):
         super().__init__()
 
         self.conv1 = GCNConv(in_dim, hidden1)
         self.conv2 = GCNConv(hidden1, hidden2)
         self.out = nn.Sequential(
-            nn.Linear(hidden2*num_nodes, hidden2),
+            nn.Linear(hidden2, hidden2),
             nn.ReLU(),
             nn.Linear(hidden2, 1)
         )
 
         self.opt = Adam(self.parameters(), lr)
-        self.num_nodes = num_nodes
 
-    def forward(self, x, ei):
+    def forward(self, x, ei, num_nodes):
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
         #x = torch.cat([z,x], dim=1)
 
-        nbatches = z.size(0) // self.num_nodes
-        return self.out(z.reshape(nbatches, self.num_nodes*z.size(1)))
+        nbatches = z.size(0) // num_nodes
+        state_vals = self.out(z).reshape(nbatches, num_nodes*z.size(1))
+        return state_vals.mean(dim=1)
 
-
-class GraphPPO():
-    def __init__(self, num_nodes, in_dim, action_space, batch_size, 
+class InductiveGraphPPO(GraphPPO):
+    def __init__(self, in_dim, action_space, batch_size, 
                  gamma=0.99, lmbda=0.95, clip=0.2, alr=0.005, clr=0.01):
-        super().__init__()
-        self.args = (num_nodes, in_dim, action_space, batch_size)
+        self.args = (in_dim, action_space, batch_size)
         self.kwargs = dict(gamma=gamma, lmbda=lmbda, clip=clip, alr=alr, clr=clr)
 
-        self.actor = ActorNetwork(in_dim, num_nodes, action_space, lr=alr)
-        self.critic = CriticNetwork(in_dim, num_nodes, lr=clr)
+        self.actor = ActorNetwork(in_dim, action_space, lr=alr)
+        self.critic = CriticNetwork(in_dim, lr=clr)
         self.memory = PPOMemory(batch_size)
 
         self.mse = nn.MSELoss()
@@ -75,6 +77,7 @@ class GraphPPO():
         self.lmbda = lmbda
         self.clip = clip 
 
+    # Copied and pasted private methods
     def __step(self):
         self.actor.opt.step()
         self.critic.opt.step()
@@ -83,30 +86,21 @@ class GraphPPO():
         self.actor.opt.zero_grad()
         self.critic.opt.zero_grad()
 
-    def train(self): 
-        self.training = True 
-        self.actor.train() 
-        self.critic.train()
-
-    def eval(self): 
-        self.training = False 
-        self.actor.eval()
-        self.critic.eval()
-
-    def remember(self, s,a,v,p,r,t):
-        self.memory.remember(s,a,v,p,r,t)
-
-    def forward(self, x,ei):
-        return self.actor(x,ei), self.critic(x,ei)
+    # Change forward to add in num_nodes for vector reshaping
+    def forward(self, x,ei, num_nodes):
+        return self.actor(x,ei,num_nodes), self.critic(x,ei, num_nodes)
     
-    def __call__(self,x,ei):
-        return self.forward(x,ei)
+    def __call__(self,x,ei, num_nodes):
+        return self.forward(x,ei, num_nodes)
 
+    # Just need to change fn signature when it calls "forward" 
     def learn(self, epochs, verbose=True):
         '''
         Assume that an external process is adding memories to 
         the PPOMemory unit, and this is called every so often
         '''
+        num_nodes = self.memory.s[0][0].size(0)
+
         self.train()
         for e in range(epochs):
             s,a,v,p,r,t, batches = self.memory.get_batches()
@@ -147,7 +141,7 @@ class GraphPPO():
                 a_ = [a[idx] for idx in b]
                 batched_states = combine_subgraphs(s_)
                 
-                dist, critic_vals = self.forward(*batched_states)
+                dist, critic_vals = self.forward(*batched_states, num_nodes)
                 
                 new_probs = dist.log_prob(torch.tensor(a_))
                 old_probs = torch.tensor([p[i] for i in b])
@@ -182,76 +176,3 @@ class GraphPPO():
 
         self.memory.clear()
         return total_loss.item()
-    
-    def save(self, outf='saved_models/ppo.pt'):
-        torch.save({
-            'args': self.args,
-            'kwargs': self.kwargs,
-            'actor': self.actor.state_dict(), 
-            'critic': self.critic.state_dict()
-        }, outf)
-
-
-def load_ppo(fname):
-    db = torch.load(fname)
-    agent = GraphPPO(*db['args'], **db['kwargs'])
-
-    agent.actor.load_state_dict(db['actor'])
-    agent.critic.load_state_dict(db['critic'])
-
-    return agent 
-
-class PPOMemory:
-    def __init__(self, bs):
-        self.s = []
-        self.a = []
-        self.v = []
-        self.p = []
-        self.r = []
-        self.t = []
-
-        self.bs = bs 
-
-    def remember(self, s,a,v,p,r,t):
-        '''
-        Args are state, action, value, log_prob, reward
-        '''
-        self.s.append(s)
-        self.a.append(a)
-        self.v.append(v)
-        self.p.append(p)
-        self.r.append(r) 
-        self.t.append(t)
-
-    def get_batches(self):
-        idxs = torch.randperm(len(self.a))
-        batch_idxs = idxs.split(self.bs)
-
-        return self.s, self.a, self.v, \
-            self.p, self.r, self.t, batch_idxs
-    
-    def clear(self):
-        self.s = []
-        self.a = []
-        self.v = []
-        self.p = []
-        self.r = []
-        self.t = []
-
-
-def combine_subgraphs(states):
-    xs,eis = zip(*states)
-    
-    # ei we need to update each node idx to be
-    # ei[i] += len(ei[i-1])
-    offset=0
-    new_eis=[]
-    for i in range(len(eis)):
-        new_eis.append(eis[i]+offset)
-        offset += xs[i].size(0)
-
-    # X is easy, just cat
-    xs = torch.cat(xs, dim=0)
-    eis = torch.cat(new_eis, dim=1)
-
-    return xs,eis

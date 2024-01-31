@@ -3,12 +3,12 @@ from argparse import ArgumentParser
 import torch 
 
 from env.yt_env import YTEnv, BlueAgent, build_graph
-from model.ppo import GraphPPO
+from model.inductive_ppo import InductiveGraphPPO
 
 MAX_STEPS = 5e6
 
 # Stable baselines hyperparams
-EPOCHS = 5
+EPOCHS = 1
 BATCH_SIZE=64
 #N = 2048
 #LR = 0.0003
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     x,ei = build_graph(GRAPH_SIZE, seed=SEED)
     env = YTEnv(x,ei)
     
-    blue = GraphPPO(GRAPH_SIZE, x.size(1), env.blue_action_space, BATCH_SIZE, alr=A_LR, clr=C_LR, clip=CLIP)
-    agent = BlueAgent(env, blue)
+    blue = InductiveGraphPPO(2, env.blue_action_space, BATCH_SIZE, alr=A_LR, clr=C_LR, clip=CLIP)
+    agent = BlueAgent(env, blue, inductive=True)
 
     experiment(env, agent)
