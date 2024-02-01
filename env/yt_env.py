@@ -1,20 +1,21 @@
 import random 
 
 import networkx as nx
+import numpy as np 
 import torch 
 from torch_geometric.nn import MessagePassing 
 from torch_geometric.utils import to_undirected, degree, add_remaining_self_loops
 
+def seed(s):
+    '''
+    All sources of randomness in the project
+    '''
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
 
-def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=None):
-    if seed is not None:
-        seed_val = seed + recurse
-        random.seed(seed_val)
-        torch.random.manual_seed(seed_val)
-        g = nx.erdos_renyi_graph(num_nodes, p, seed=seed_val)
-    else:
-        g = nx.erdos_renyi_graph(num_nodes, p)
-
+def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, verbose=True):
+    g = nx.erdos_renyi_graph(num_nodes, p)
     ei = [list(e) for e in g.edges]
     
     nodes = set(range(num_nodes))
@@ -23,8 +24,9 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=None):
 
     # Unlikely but has happened in some experiments
     if len(nonisolated) == 0: 
-        print(f"nonisolated == {{}} . Trying again ({recurse})")
-        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, seed=seed)
+        if verbose:
+            print(f"nonisolated == {{}} . Trying again ({recurse})")
+        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, verbose=verbose)
     
 
     # Authors use "amended Erdos-Renyi" s.t. no nodes
@@ -37,8 +39,9 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=None):
     # add random edges, but let's see how frequent this actually is 
     g = nx.Graph(ei)
     if not nx.is_connected(g):
-        print(f"Graph was disconnected. Trying again ({recurse})")
-        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, seed=seed)
+        if verbose:
+            print(f"Graph was disconnected. Trying again ({recurse})")
+        return build_graph(num_nodes,p,min_v, max_v, recurse=recurse+1, verbose=verbose)
 
     # Now that we know graph is connected, it's very simple to spin up 
     # the node features. Just a (n x 2) matrix of each node's 
@@ -51,8 +54,8 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, seed=None):
     ei = torch.tensor(ei, dtype=torch.long).T 
     ei = to_undirected(ei)
 
-    #deg = degree(ei[0])
-    #x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
+    deg = degree(ei[0])
+    x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
     #x = torch.cat([x, torch.eye(x.size(0))], dim=1)
 
     ei = add_remaining_self_loops(ei)[0]

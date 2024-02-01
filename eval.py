@@ -20,7 +20,7 @@ N = args.n[0]
 SEED = args.seed 
 DETERMINISTIC = args.random 
 
-FNAME = f'ppo_{N}N_{SEED}_last'
+FNAME = 'og_tanh/ppo_40N_0_last' #f'ppo_{N}N_{SEED}_last'
 
 model = load_ppo(f'saved_models/{FNAME}.pt')
 model.eval()
