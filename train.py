@@ -8,7 +8,7 @@ from model.ppo import GraphPPO
 MAX_STEPS = 5e6
 
 # Stable baselines hyperparams
-EPOCHS = 1
+EPOCHS = 5
 BATCH_SIZE=64
 #N = 2048
 #LR = 0.0003

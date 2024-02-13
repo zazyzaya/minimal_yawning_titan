@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 import torch 
 
-from env.yt_env import YTEnv, BlueAgent, build_graph
+from env.yt_env import YTEnv, BlueAgent, build_graph, seed
 from model.inductive_ppo import InductiveGraphPPO
 
 MAX_STEPS = 5e6
@@ -20,6 +20,7 @@ A_LR = 0.0003
 CLIP = 0.1
 
 SEED = 0
+seed(SEED)
 
 torch.set_num_threads(16)
 
@@ -68,7 +69,7 @@ def simulate(env: YTEnv, agent: BlueAgent):
 
     return env.ts, tot_r 
 
-def experiment(env: YTEnv, agent: BlueAgent):
+def experiment(env: YTEnv, agent: BlueAgent, domain_randomization=False):
     tr_steps = 0 
     ep_lens, ep_rews = [],[]
 
@@ -89,6 +90,11 @@ def experiment(env: YTEnv, agent: BlueAgent):
         print(f'[{tr_steps}] Avg r: {avg_r:0.2f}, Avg l: {sum(l)/len(l):0.2f}')
         torch.save({'rews': ep_rews, 'lens': ep_lens}, f'logs/{GRAPH_SIZE}N_{SEED}.pt')
 
+        if domain_randomization:
+            x,ei = build_graph(GRAPH_SIZE, verbose=False)
+            env = YTEnv(x,ei)
+            agent = BlueAgent(env, agent.model)
+
     agent.model.save(f'saved_models/ppo_{GRAPH_SIZE}N_{SEED}_last.pt')
 
 if __name__ == '__main__':
@@ -98,10 +104,10 @@ if __name__ == '__main__':
     args = ap.parse_args()
     GRAPH_SIZE = args.num_nodes[0]
 
-    x,ei = build_graph(GRAPH_SIZE, seed=SEED)
+    x,ei = build_graph(GRAPH_SIZE)
     env = YTEnv(x,ei)
     
-    blue = InductiveGraphPPO(2, env.blue_action_space, BATCH_SIZE, alr=A_LR, clr=C_LR, clip=CLIP)
+    blue = InductiveGraphPPO(x.size(1), 2, BATCH_SIZE, alr=A_LR, clr=C_LR, clip=CLIP)
     agent = BlueAgent(env, blue, inductive=True)
 
     experiment(env, agent)

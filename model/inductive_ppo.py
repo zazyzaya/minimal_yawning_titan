@@ -32,9 +32,11 @@ class ActorNetwork(nn.Module):
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
         #x = torch.cat([x,z], dim=1)
+
+        z = self.out(z)
         
         nbatches = z.size(0) // num_nodes
-        dist = self.out(z).reshape(nbatches, num_nodes*z.size(1))
+        dist = z.reshape(nbatches, num_nodes*z.size(1))
         dist = self.softmax(dist)
 
         return Categorical(dist)
@@ -57,9 +59,10 @@ class CriticNetwork(nn.Module):
         z = torch.relu(self.conv1(x, ei))
         z = torch.relu(self.conv2(z, ei))
         #x = torch.cat([z,x], dim=1)
+        z = self.out(z)
 
         nbatches = z.size(0) // num_nodes
-        state_vals = self.out(z).reshape(nbatches, num_nodes*z.size(1))
+        state_vals = z.reshape(nbatches, num_nodes*z.size(1))
         return state_vals.mean(dim=1)
 
 class InductiveGraphPPO(GraphPPO):
@@ -161,7 +164,7 @@ class InductiveGraphPPO(GraphPPO):
 
                 # Critic uses MSE loss between expected value of state and observed
                 # reward with discount factor 
-                critic_loss = self.mse(r[b].unsqueeze(-1), critic_vals)
+                critic_loss = self.mse(r[b], critic_vals)
 
                 # Not totally necessary but maybe will help?
                 entropy_loss = entropy.mean()
@@ -176,3 +179,12 @@ class InductiveGraphPPO(GraphPPO):
 
         self.memory.clear()
         return total_loss.item()
+    
+def load_ppo(fname):
+    db = torch.load(fname)
+    agent = InductiveGraphPPO(*db['args'], **db['kwargs'])
+
+    agent.actor.load_state_dict(db['actor'])
+    agent.critic.load_state_dict(db['critic'])
+
+    return agent 

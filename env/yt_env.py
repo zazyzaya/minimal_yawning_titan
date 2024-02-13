@@ -54,8 +54,8 @@ def build_graph(num_nodes, p=0.1, min_v=0.01, max_v=1, recurse=0, verbose=True):
     ei = torch.tensor(ei, dtype=torch.long).T 
     ei = to_undirected(ei)
 
-    deg = degree(ei[0])
-    x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
+    #deg = degree(ei[0])
+    #x = torch.cat([x, deg.unsqueeze(-1)], dim=1)
     #x = torch.cat([x, torch.eye(x.size(0))], dim=1)
 
     ei = add_remaining_self_loops(ei)[0]
@@ -202,8 +202,24 @@ class BlueAgent:
         self.inductive = inductive
 
     def num_to_action(self, i):
+        if self.inductive:
+            return self.num_to_action_inductive(i)
+        
         action = [self.env.patch, self.env.restore, self.env.noop][i // self.env.num_nodes]
         target = i % self.env.num_nodes 
+        return action, target 
+
+    def num_to_action_inductive(self, i):
+        '''
+        Should have done it this way from the beginning, but for backwards
+        compatibility, I'm leaving the old code as is 
+
+        NOTE: ignores no-op actions. No reason to use them if actions don't have
+        cost. May as well spin around patching random nodes instead of taking 
+        no action. 
+        '''
+        target = i // 2 
+        action = [self.env.patch, self.env.restore][i % 2]
         return action, target 
 
     def select_action(self, x,ei):
